@@ -1,0 +1,189 @@
+use std::{collections::HashMap, path::Path};
+
+use crate::client::EnvVar;
+use crate::error::Error;
+use crate::utils::generate_password;
+
+#[derive(Debug, Clone, Default)]
+pub struct GeneratedCredentials {
+    pub user: Option<String>,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedStack {
+    pub name: String,
+    pub template_name: String,
+    pub compose_content: String,
+    pub env_vars: Vec<EnvVar>,
+    pub generated_credentials: GeneratedCredentials,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyDef {
+    pub name: String,
+    pub domain: String,
+    pub scheme: String,
+    pub forward_host: String,
+    pub forward_port: u16,
+    pub websockets: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TemplateConfig {
+    stack_name: &'static str,
+    env_defaults: &'static [(&'static str, &'static str)],
+    proxies: &'static [StaticProxyDef],
+}
+
+#[derive(Debug, Clone)]
+struct StaticProxyDef {
+    name: &'static str,
+    scheme: &'static str,
+    forward_host: &'static str,
+    forward_port: u16,
+    websockets: bool,
+}
+
+fn builtin_templates() -> HashMap<&'static str, TemplateConfig> {
+    let mut m = HashMap::new();
+
+    m.insert(
+        "npm",
+        TemplateConfig {
+            stack_name: "nginx-proxy-manager",
+            env_defaults: &[
+                ("INITIAL_ADMIN_EMAIL", "admin@mail.com"),
+                ("INITIAL_ADMIN_PASSWORD", "$uato"),
+            ],
+            proxies: &[],
+        },
+    );
+
+    m.insert(
+        "wireguard",
+        TemplateConfig {
+            stack_name: "wireguard-vpn",
+            env_defaults: &[
+                ("WG_ADMIN_USER", "admin"),
+                ("WG_ADMIN_PASS", "$auto"),
+                ("WG_HOST", "$host_ip"), // replaced at resolution time
+                ("WG_PORT", "51820"),
+            ],
+            proxies: &[StaticProxyDef {
+                name: "Wireguard VPN Admin",
+                scheme: "http",
+                forward_host: "wg-easy",
+                forward_port: 51821,
+                websockets: true,
+            }],
+        },
+    );
+
+    m
+}
+
+pub fn print_available_templates() {
+    println!("Available built-in stack templates:");
+    let mut names: Vec<_> = builtin_templates().into_keys().collect();
+    names.sort();
+    for name in names {
+        println!("{name}");
+    }
+}
+
+fn load_compose(template_dir: &str, template_name: &str) -> Result<String, String> {
+    let path = Path::new(template_dir).join(format!("{template_name}.yaml"));
+    std::fs::read_to_string(&path).map_err(|_| path.display().to_string())
+}
+
+pub fn resolve_stack(
+    template_name: &str,
+    template_dir: &str,
+    host_ip: &str,
+    overrides: &HashMap<String, String>,
+) -> Result<ResolvedStack, Error> {
+    let builtins = builtin_templates();
+    let compose_content =
+        load_compose(template_dir, template_name).map_err(|path| Error::TemplateNotFound {
+            name: template_name.to_string(),
+            path,
+        })?;
+
+    let mut env: HashMap<String, String> = HashMap::new();
+    let mut generated_credentials = GeneratedCredentials::default();
+
+    if let Some(config) = builtins.get(template_name) {
+        for (key, default) in config.env_defaults {
+            let value = match *default {
+                "$auto" => {
+                    let pass = generate_password(20);
+                    match *key {
+                        "INITIAL_ADMIN_EMAIL" | "WG_ADMIN_USER" => {
+                            generated_credentials.user = Some(pass.clone());
+                        }
+                        "INITIAL_ADMIN_PASSWORD" | "WG_ADMIN_PASS" => {
+                            generated_credentials.password = Some(pass.clone());
+                        }
+                        _ => {}
+                    }
+                    pass
+                }
+                "$host_ip" => host_ip.to_string(),
+                other => {
+                    match *key {
+                        "INITIAL_ADMIN_EMAIL" | "WG_ADMIN_USER" => {
+                            generated_credentials.user = Some(other.to_string())
+                        }
+                        _ => {}
+                    }
+                    other.to_string()
+                }
+            };
+            env.insert(key.to_string(), value);
+        }
+    }
+
+    for (k, v) in overrides {
+        env.insert(k.clone(), v.clone());
+    }
+
+    let stack_name = builtins
+        .get(template_name)
+        .map(|c| c.stack_name.to_string())
+        .unwrap_or_else(|| template_name.to_string());
+
+    let env_vars = env
+        .into_iter()
+        .map(|(name, value)| EnvVar { name, value })
+        .collect();
+
+    Ok(ResolvedStack {
+        name: stack_name,
+        template_name: template_name.to_string(),
+        compose_content,
+        env_vars,
+        generated_credentials,
+    })
+}
+
+pub fn default_proxies_for_template(template_name: &str, host_ip: &str) -> Vec<ProxyDef> {
+    let builtins = builtin_templates();
+
+    let Some(config) = builtins.get(template_name) else {
+        return vec![];
+    };
+
+    config
+        .proxies
+        .iter()
+        .map(|p| ProxyDef {
+            name: p.name.to_string(),
+            domain: host_ip.to_string(),
+            scheme: p.scheme.to_string(),
+            forward_host: p.forward_host.to_string(),
+            forward_port: p.forward_port,
+            websockets: p.websockets,
+        })
+        .collect()
+}
