@@ -81,8 +81,7 @@ impl Deployer {
             .or_else(|| stored.and_then(|c| c.user.as_deref()))
             .ok_or_else(|| {
                 Error::other(format!(
-                    "No Portainer credentials found for {}. \
-                     Run: portctl creds set -H {} -s portainer -u <user> -p <password>",
+                    "No Portainer credentials found for {}.\nRun: portctl creds set -H {} -s portainer -u <user> -p <password>",
                     args.host, args.host
                 ))
             })?
@@ -186,8 +185,7 @@ impl Deployer {
     ) {
         let Some(npm_creds) = store.get(args.npm_host(), "npm") else {
             error!(
-                "No NPM credentials found for {} — was the npm stack deployed? \
-                 Re-run without --enable-proxy first, then retry.",
+                "No NPM credentials found for {} — was the npm stack deployed?\nRe-run without --enable-proxy first, then retry.",
                 args.npm_host()
             );
             return;
