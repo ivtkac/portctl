@@ -87,9 +87,7 @@ pub fn print_available_templates() {
     println!("Available built-in stack templates:");
     let mut names: Vec<_> = builtin_templates().into_keys().collect();
     names.sort();
-    for name in names {
-        println!("{name}");
-    }
+    print!("{}", names.join(", "));
 }
 
 fn load_compose(template_dir: &str, template_name: &str) -> Result<String, String> {
@@ -186,4 +184,46 @@ pub fn default_proxies_for_template(template_name: &str, host_ip: &str) -> Vec<P
             websockets: p.websockets,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    const HOST_IP: &str = "192.168.1.100";
+
+    fn write_compose(dir: &TempDir, template_name: &str) -> String {
+        let content = format!("# compose for {template_name}\nservices: {{}}");
+        let path = dir.path().join(format!("{template_name}.yaml"));
+        std::fs::write(&path, &content).expect("failed to write compose fixture");
+        dir.path().to_str().unwrap().to_string()
+    }
+
+    fn no_overrides() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    macro_rules! setup {
+        ($dir:ident, $template_dir:ident) => {
+            let $dir = TempDir::new().expect("temp dir");
+            let $template_dir = $dir.path().to_str().unwrap().to_string();
+        };
+
+        ($dir:ident, $template_dir:ident, $tpl:literal) => {
+            setup!($dir, $template_dir);
+            write_compose(&$dir, $tpl);
+        };
+    }
+
+    #[test]
+    fn test_resolve_stack_whem_missing() {
+        setup!(dir, template_dir);
+        let result = resolve_stack("npm", &template_dir, HOST_IP, &no_overrides());
+        assert!(
+            matches!(result, Err(Error::TemplateNotFound { .. })),
+            "expected TemplateNotFound, got {result:?}"
+        );
+    }
 }
