@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode, multipart};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
 
 use crate::error::Error;
 
@@ -36,8 +37,8 @@ impl HttpClient {
         &self.service_tag
     }
 
-    fn url(&self, endpoint: &str) -> String {
-        format!("{}/api/{}", self.base_url, endpoint)
+    pub fn url(&self, endpoint: &str) -> String {
+        format!("{}/api/{}", self.base_url, endpoint.trim_start_matches('/'))
     }
 
     fn auth_header(&self) -> Option<String> {
@@ -50,11 +51,16 @@ impl HttpClient {
         R: for<'de> Deserialize<'de>,
     {
         let url = self.url(endpoint);
+        debug!("[{}] POST {}", self.tag(), endpoint);
+
         let mut req = self.inner.post(&url).json(body);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
         }
+
         let res = req.send().await?;
+        debug!("[{}] POST {} -> {}", self.tag(), endpoint, res.status());
+
         let res = res.error_for_status()?;
         Ok(res.json().await?)
     }
@@ -64,10 +70,29 @@ impl HttpClient {
         B: Serialize,
     {
         let url = self.url(endpoint);
+        debug!("[{}] POST {}", self.tag(), endpoint);
+
         let mut req = self.inner.post(&url).json(body);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
         }
+
+        Ok(req.send().await?)
+    }
+
+    pub async fn post_form(
+        &self,
+        endpoint: &str,
+        form: multipart::Form,
+    ) -> Result<Response, Error> {
+        let url = self.url(endpoint);
+        debug!("[{}] POST {}", self.tag(), endpoint);
+
+        let mut req = self.inner.post(&url).multipart(form);
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+
         Ok(req.send().await?)
     }
 
@@ -76,10 +101,13 @@ impl HttpClient {
         R: for<'de> Deserialize<'de>,
     {
         let url = self.url(endpoint);
+        debug!("[{}] GET {}", self.tag(), endpoint);
+
         let mut req = self.inner.get(&url);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
         }
+
         let res = req.send().await?.error_for_status()?;
         Ok(res.json().await?)
     }
@@ -138,6 +166,15 @@ impl PortainerClient {
     }
 
     pub async fn get_endpoint_id(&self, endpoint_name: &str) -> Result<u64, Error> {
+        debug!("[Portainer:{}] Fetching endpoints...", self.host);
+
+        if endpoint_name == "local" {
+            let form = multipart::Form::new()
+                .text("Name", "local")
+                .text("EndpointCreationType", "1");
+            self.http.post_form("/endpoints", form).await?;
+        }
+
         let endpoints: Vec<Endpoint> = self.http.get("/endpoints").await?;
         endpoints
             .into_iter()
@@ -155,6 +192,11 @@ impl PortainerClient {
         endpoint_id: u64,
         env_vars: Vec<EnvVar>,
     ) -> Result<(), Error> {
+        info!(
+            "[Portainer:{}] Deploying stack '{}'...",
+            self.host, stack_name
+        );
+
         let payload = DeployStackPayload {
             name: stack_name,
             stack_file_content: stack_content,
@@ -165,8 +207,20 @@ impl PortainerClient {
         let res = self.http.post_raw(&endpoint, &payload).await?;
 
         match res.status() {
-            s if s.is_success() => Ok(()),
-            StatusCode::CONFLICT => Ok(()),
+            s if s.is_success() => {
+                info!(
+                    "[Portainer:{}] Stack '{}' deployed successfully",
+                    self.host, stack_name
+                );
+                Ok(())
+            }
+            StatusCode::CONFLICT => {
+                warn!(
+                    "[Portainer:{}] Stack '{}' already exists — skipping",
+                    self.host, stack_name
+                );
+                Ok(())
+            }
             s => {
                 let body = res.text().await.unwrap_or_default();
                 Err(Error::ApiError {
@@ -181,6 +235,8 @@ impl PortainerClient {
 
 impl Authenticatable for PortainerClient {
     async fn authenticate(&mut self, username: &str, password: &str) -> Result<(), Error> {
+        info!("[Portainer:{}] Authenticating...", self.host);
+
         let res: AuthResponse = self
             .http
             .post("/auth", &AuthPayload { username, password })
@@ -189,7 +245,9 @@ impl Authenticatable for PortainerClient {
                 service: "Portainer".into(),
                 host: self.host.clone(),
             })?;
+
         self.http.set_token(res.jwt);
+        info!("[Portainer:{}] Authentication successful", self.host);
         Ok(())
     }
 }
@@ -277,10 +335,28 @@ impl NpmClient {
 
     pub async fn create_proxy_host(&self, payload: CreateProxyHostPayload) -> Result<(), Error> {
         let domain = payload.domain_names.first().cloned().unwrap_or_default();
+        info!(
+            "[NPM:{}] Creating proxy host for '{}'...",
+            self.host, domain
+        );
+
         let res = self.http.post_raw("/nginx/proxy-hosts", &payload).await?;
         match res.status() {
-            s if s.is_success() => Ok(()),
-            StatusCode::BAD_REQUEST => Ok(()),
+            s if s.is_success() => {
+                info!(
+                    "[NPM:{}] Proxy host for '{}' created successfully",
+                    self.host, domain
+                );
+                Ok(())
+            }
+            StatusCode::BAD_REQUEST => {
+                let body = res.text().await.unwrap_or_default();
+                warn!(
+                    "[NPM:{}] Proxy host for '{}' may already exist or data is invalid: {}",
+                    self.host, domain, body
+                );
+                Ok(())
+            }
             s => {
                 let body = res.text().await.unwrap_or_default();
                 Err(Error::ApiError {
@@ -302,6 +378,8 @@ impl NpmClient {
 
 impl Authenticatable for NpmClient {
     async fn authenticate(&mut self, email: &str, password: &str) -> Result<(), Error> {
+        info!("[NPM:{}] Authenticating...", self.host);
+
         let res: NpmAuthResponse = self
             .http
             .post(
@@ -316,7 +394,9 @@ impl Authenticatable for NpmClient {
                 service: "NPM".into(),
                 host: self.host.clone(),
             })?;
+
         self.http.set_token(res.token);
+        info!("[NPM:{}] Authentication successful", self.host);
         Ok(())
     }
 }

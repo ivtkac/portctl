@@ -17,7 +17,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +50,7 @@ pub struct CredentialStore {
 impl CredentialStore {
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, Error> {
         let path = path.into();
+
         let store = if path.exists() {
             let raw = std::fs::read_to_string(&path)?;
             toml::from_str(&raw).map_err(|e| {
@@ -59,8 +60,13 @@ impl CredentialStore {
                 ))
             })?
         } else {
+            debug!(
+                "Credentials file {} not found — starting empty",
+                path.display()
+            );
             Store::default()
         };
+
         Ok(Self { path, store })
     }
 
@@ -71,6 +77,7 @@ impl CredentialStore {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&self.path, serialized)?;
+        info!("Credentials saved to {}", self.path.display());
         Ok(())
     }
 

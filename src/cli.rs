@@ -127,7 +127,7 @@ impl DeployArgs {
     pub fn npm_base_url(&self) -> String {
         match &self.npm_url {
             Some(url) => url.clone(),
-            None => format!("http://{}:{}", self.host, self.portainer_port),
+            None => format!("http://{}:{}", self.host, self.npm_port),
         }
     }
 }

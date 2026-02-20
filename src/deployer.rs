@@ -1,6 +1,6 @@
 use crate::cli::DeployArgs;
 use crate::client::{Authenticatable, CreateProxyHostPayload, NpmClient, PortainerClient};
-use crate::credentials::CredentialStore;
+use crate::credentials::{CredentialStore, Credentials};
 use crate::error::Error;
 use crate::templates::{ResolvedStack, default_proxies_for_template, resolve_stack};
 use std::collections::HashMap;
@@ -36,7 +36,20 @@ impl Deployer {
         let mut stacks: Vec<ResolvedStack> = Vec::with_capacity(args.stacks.len());
 
         for template_name in &args.stacks {
-            match resolve_stack(template_name, &args.template_dir, &args.host, &overrides) {
+            let service = if NPM_TEMPLATES_NAMES.contains(&template_name.as_str()) {
+                "npm"
+            } else {
+                template_name.as_str()
+            };
+            let existing_creds = store.get(&args.host, service);
+
+            match resolve_stack(
+                template_name,
+                &args.template_dir,
+                &args.host,
+                &overrides,
+                existing_creds,
+            ) {
                 Ok(stack) => stacks.push(stack),
                 Err(e) => error!("Skipping template '{}': {}", template_name, e),
             }
@@ -162,6 +175,16 @@ impl Deployer {
             } else {
                 &stack.template_name
             };
+
+            store.patch(
+                host,
+                service,
+                Credentials {
+                    user: creds.user.clone(),
+                    password: creds.password.clone(),
+                    url: None,
+                },
+            );
 
             info!(
                 "Auto-saved generated credentials for {} stack '{}' → stored as [{service}@{host}]",

@@ -12,6 +12,8 @@ use tracing::info;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    init_logging(cli.verbose);
+
     let creds_path = cli.resolved_credentials_path();
 
     match cli.command {
@@ -88,4 +90,15 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn init_logging(verbose: bool) {
+    let level = if verbose { "debug" } else { "info" };
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level)),
+        )
+        .with_target(false)
+        .init();
 }
