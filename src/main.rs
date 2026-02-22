@@ -31,6 +31,11 @@ async fn main() -> Result<()> {
                     .stack_deploy(args, load_store()?)
                     .await?;
             }
+            StackCommands::Remove(args) => {
+                Deployer::new(args.secure)
+                    .stack_remove(args, load_store()?)
+                    .await?;
+            }
             StackCommands::List(args) => {
                 Deployer::new(args.secure)
                     .stack_list(args, load_store()?)

@@ -108,6 +108,16 @@ impl HttpClient {
             .await?;
         Ok(res)
     }
+
+    pub async fn delete_raw(&self, endpoint: &str) -> Result<Response, Error> {
+        debug!("[{}] DELETE {}", self.tag, endpoint);
+        let res = self
+            .authorize(self.inner.delete(self.url(endpoint)))
+            .send()
+            .await?;
+        debug!("[{}] DELETE {} -> {}", self.tag, endpoint, res.status());
+        Ok(res)
+    }
 }
 
 pub trait Authenticatable {

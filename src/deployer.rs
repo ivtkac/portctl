@@ -1,4 +1,4 @@
-use crate::cli::{ProxyEnableArgs, ProxyListArgs, StackDeployArgs, StackListArgs};
+use crate::cli::{ProxyEnableArgs, ProxyListArgs, StackDeployArgs, StackListArgs, StackRemoveArgs};
 use crate::client::{Authenticatable, CreateProxyHostPayload, NpmClient, PortainerClient};
 use crate::credentials::{CredentialStore, Credentials};
 use crate::error::Error;
@@ -47,6 +47,21 @@ impl PortainerArgs for StackListArgs {
     }
     fn portainer_base_url(&self) -> String {
         StackListArgs::portainer_base_url(self)
+    }
+}
+
+impl PortainerArgs for StackRemoveArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        StackRemoveArgs::portainer_base_url(self)
     }
 }
 
@@ -143,6 +158,18 @@ impl Deployer {
         for s in &stacks {
             println!("{:<4}  {:<30}  {}", s.id, s.name, "unimplemented");
         }
+        Ok(())
+    }
+
+    pub async fn stack_remove(
+        &self,
+        args: StackRemoveArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        let endpoint_id = portainer.get_endpoint_id(&args.endpoint).await?;
+        let stack_id = portainer.get_stack_id(endpoint_id, &args.name).await?;
+        portainer.delete_stack(endpoint_id, stack_id).await?;
         Ok(())
     }
 

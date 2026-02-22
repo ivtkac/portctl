@@ -73,6 +73,21 @@ impl PortainerClient {
             })
     }
 
+    pub async fn get_stack_id(&self, endpoint_id: u64, stack_name: &str) -> Result<u64, Error> {
+        debug!("[Portainer:{}] Fetching stacks...", self.host);
+        let stacks: Vec<PortainerStack> = self
+            .http
+            .get(&format!("/stacks?endpointId={endpoint_id}"))
+            .await?;
+        stacks
+            .into_iter()
+            .find(|s| s.name == stack_name)
+            .map(|s| s.id)
+            .ok_or(Error::StackNotFound {
+                name: stack_name.to_string(),
+            })
+    }
+
     pub async fn deploy_stack(
         &self,
         stack_name: &str,
@@ -117,6 +132,17 @@ impl PortainerClient {
 
     pub async fn list_stacks(&self) -> Result<Vec<PortainerStack>, Error> {
         self.http.get("/stacks").await
+    }
+
+    pub async fn delete_stack(&self, endpoint_id: u64, stack_id: u64) -> Result<(), Error> {
+        self.http
+            .delete_raw(&format!("/stacks/{stack_id}?endpointId={endpoint_id}"))
+            .await?;
+        info!(
+            "[Portainer:{}] Stack '{stack_id}' deleted successfully",
+            self.host
+        );
+        Ok(())
     }
 }
 

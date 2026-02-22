@@ -27,6 +27,9 @@ pub enum Error {
     #[error("Endpoint '{name}' not found on Portainer")]
     EndpointNotFound { name: String },
 
+    #[error("Stack '{name}' not found on Portainer")]
+    StackNotFound { name: String },
+
     #[error("{0}")]
     Other(String),
 }
