@@ -1,36 +1,65 @@
-use anyhow::Result;
-use clap::Parser;
-use portctl::{
-    cli::{Cli, Commands, CredsCommands},
+pub mod cli;
+pub mod client;
+pub mod credentials;
+pub mod deployer;
+pub mod error;
+pub mod templates;
+pub mod utils;
+
+use crate::{
+    cli::{Cli, Commands, CredsCommands, ProxyCommands, StackCommands, TemplatesCommands},
     credentials::{CredentialStore, Credentials},
     deployer::Deployer,
-    templates,
 };
+
+use anyhow::Result;
+use clap::Parser;
 use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
     init_logging(cli.verbose);
 
-    let creds_path = cli.resolved_credentials_path();
+    let creds_path = cli.resolved_credentials_file();
+    let load_store = || CredentialStore::load(&creds_path);
 
     match cli.command {
-        Commands::Deploy(args) => {
-            let store = CredentialStore::load(&creds_path)?;
-            let deployer = Deployer::new(args.insecure);
-            deployer.run(args, store).await?;
-        }
-        Commands::Creds(sub) => {
-            let mut store = CredentialStore::load(&creds_path)?;
+        Commands::Stack(sub) => match sub {
+            StackCommands::Deploy(args) => {
+                Deployer::new(args.secure)
+                    .stack_deploy(args, load_store()?)
+                    .await?;
+            }
+            StackCommands::List(args) => {
+                Deployer::new(args.secure)
+                    .stack_list(args, load_store()?)
+                    .await?;
+            }
+        },
 
+        Commands::Proxy(sub) => match sub {
+            ProxyCommands::Enable(args) => {
+                Deployer::new(args.secure)
+                    .proxy_enable(args, load_store()?)
+                    .await?;
+            }
+            ProxyCommands::List(args) => {
+                Deployer::new(args.secure)
+                    .proxy_list(args, load_store()?)
+                    .await?;
+            }
+        },
+
+        Commands::Creds(sub) => {
+            let mut store = load_store()?;
             match sub {
                 CredsCommands::Set(args) => {
                     if args.service != "portainer" {
                         eprintln!(
                             "Only 'portainer' credentials are manually managed.\n\
-                             NPM credentials are auto-generated and saved when you deploy the npm stack."
+                                 NPM credentials are auto-generated and saved when you \
+                                 deploy the npm stack."
                         );
                         return Ok(());
                     }
@@ -51,29 +80,7 @@ async fn main() -> Result<()> {
                         creds_path.display()
                     );
                 }
-
-                CredsCommands::List => {
-                    let entries = store.all_entries();
-                    if entries.is_empty() {
-                        println!("No credentials stored in {}", creds_path.display());
-                    } else {
-                        println!("Stored credentials ({}):\n", creds_path.display());
-                        for (host, service, creds) in entries {
-                            let user = creds.user.as_deref().unwrap_or("<not set>");
-                            let pass = creds
-                                .password
-                                .as_ref()
-                                .map(|p| "*".repeat(p.len().min(12)))
-                                .unwrap_or_else(|| "<not set>".to_string());
-                            let url = creds.url.as_deref().unwrap_or("-");
-                            println!("  [{service}@{host}]");
-                            println!("    user     = {user}");
-                            println!("    password = {pass}");
-                            println!("    url      = {url}");
-                        }
-                    }
-                }
-
+                CredsCommands::List => print_creds(&store, &creds_path.display().to_string()),
                 CredsCommands::Remove(args) => {
                     if store.remove(&args.host, &args.service) {
                         store.save()?;
@@ -84,12 +91,35 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::ListTemplates => {
-            templates::print_available_templates();
-        }
+
+        Commands::Templates(sub) => match sub {
+            TemplatesCommands::List => templates::print_available_templates(),
+        },
     }
 
     Ok(())
+}
+
+fn print_creds(store: &CredentialStore, path: &str) {
+    let entries = store.all_entries();
+    if entries.is_empty() {
+        println!("No credentials stored in {path}");
+        return;
+    }
+    println!("Stored credentials ({path}):\n");
+    for (host, service, creds) in entries {
+        let user = creds.user.as_deref().unwrap_or("");
+        let pass = creds
+            .password
+            .as_ref()
+            .map(|p| "*".repeat(p.len().min(12)))
+            .unwrap_or_default();
+        let url = creds.url.as_deref().unwrap_or("-");
+        println!("  [{service}@{host}]");
+        println!("    user     = {user}");
+        println!("    password = {pass}");
+        println!("    url      = {url}");
+    }
 }
 
 fn init_logging(verbose: bool) {

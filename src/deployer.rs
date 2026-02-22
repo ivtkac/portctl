@@ -1,4 +1,4 @@
-use crate::cli::DeployArgs;
+use crate::cli::{ProxyEnableArgs, ProxyListArgs, StackDeployArgs, StackListArgs};
 use crate::client::{Authenticatable, CreateProxyHostPayload, NpmClient, PortainerClient};
 use crate::credentials::{CredentialStore, Credentials};
 use crate::error::Error;
@@ -6,235 +6,159 @@ use crate::templates::{ResolvedStack, default_proxies_for_template, resolve_stac
 use std::collections::HashMap;
 use tracing::{error, info, warn};
 
-const NPM_TEMPLATES_NAMES: &[&str] = &["npm", "nginx-proxy-manager"];
+const NPM_TEMPLATE_NAMES: &[&str] = &["npm", "nginx-proxy-manager"];
+
+trait PortainerArgs {
+    fn host(&self) -> &str;
+    fn user(&self) -> Option<&str>;
+    fn password(&self) -> Option<&str>;
+    fn portainer_base_url(&self) -> String;
+}
+
+trait NpmArgs {
+    fn npm_host(&self) -> &str;
+    fn npm_base_url(&self) -> String;
+}
+
+impl PortainerArgs for StackDeployArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        StackDeployArgs::portainer_base_url(self)
+    }
+}
+
+impl PortainerArgs for StackListArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        StackListArgs::portainer_base_url(self)
+    }
+}
+
+impl NpmArgs for ProxyEnableArgs {
+    fn npm_host(&self) -> &str {
+        ProxyEnableArgs::npm_host(self)
+    }
+    fn npm_base_url(&self) -> String {
+        ProxyEnableArgs::npm_base_url(self)
+    }
+}
+
+impl NpmArgs for ProxyListArgs {
+    fn npm_host(&self) -> &str {
+        ProxyListArgs::npm_host(self)
+    }
+    fn npm_base_url(&self) -> String {
+        ProxyListArgs::npm_base_url(self)
+    }
+}
 
 pub struct Deployer {
-    insecure: bool,
+    secure: bool,
 }
 
 impl Deployer {
-    pub fn new(insecure: bool) -> Self {
-        Self { insecure }
+    pub fn new(secure: bool) -> Self {
+        Self { secure }
     }
 
-    pub async fn run(&self, args: DeployArgs, mut store: CredentialStore) -> Result<(), Error> {
-        let (portainer_user, portainer_pass, portainer_url) =
-            self.resolve_portainer_creds(&args, &store)?;
-
-        let mut portainer = PortainerClient::new(portainer_url, args.host.clone(), self.insecure);
-        portainer
-            .authenticate(&portainer_user, &portainer_pass)
-            .await?;
-
+    pub async fn stack_deploy(
+        &self,
+        args: StackDeployArgs,
+        mut store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
         let endpoint_id = portainer.get_endpoint_id(&args.endpoint).await?;
         info!(
             "Using Portainer endpoint '{}' (id={})",
             args.endpoint, endpoint_id
         );
 
-        let overrides: HashMap<String, String> = HashMap::new();
-        let mut stacks: Vec<ResolvedStack> = Vec::with_capacity(args.stacks.len());
-
-        for template_name in &args.stacks {
-            let service = if NPM_TEMPLATES_NAMES.contains(&template_name.as_str()) {
-                "npm"
-            } else {
-                template_name.as_str()
-            };
-            let existing_creds = store.get(&args.host, service);
-
-            match resolve_stack(
-                template_name,
-                &args.template_dir,
-                &args.host,
-                &overrides,
-                existing_creds,
-            ) {
-                Ok(stack) => stacks.push(stack),
-                Err(e) => error!("Skipping template '{}': {}", template_name, e),
-            }
-        }
+        let overrides = HashMap::new();
+        let stacks: Vec<ResolvedStack> = args
+            .name
+            .iter()
+            .filter_map(|template_name| {
+                let service = npm_service_key(template_name);
+                let existing_creds = store.get(&args.host, service);
+                resolve_stack(
+                    template_name,
+                    &args.template_dir,
+                    &args.host,
+                    &overrides,
+                    existing_creds,
+                )
+                .map_err(|e| error!("Skipping template '{template_name}': {e}"))
+                .ok()
+            })
+            .collect();
 
         if stacks.is_empty() {
-            return Err(Error::other("No valid stack templates resolved — aborting"));
+            return Err(Error::Other(format!(
+                "No valid stack templates resolved — aborting"
+            )));
         }
 
-        let stack_results = self.deploy_stacks(&portainer, endpoint_id, &stacks).await;
-        self.persist_generated_creds(&stacks, &stack_results, &args.host, &mut store)?;
+        let results = self.deploy_stacks(&portainer, endpoint_id, &stacks).await;
+        self.persist_generated_creds(&stacks, &results, &args.host, &mut store)?;
+        self.print_summary(&results);
 
-        if args.enable_proxy {
-            let sucessfully_deployed: Vec<&ResolvedStack> = stacks
-                .iter()
-                .filter(|s| *stack_results.get(&s.name).unwrap_or(&false))
-                .collect();
-
-            self.deploy_proxies(&args, &store, &sucessfully_deployed)
-                .await;
-        }
-
-        self.print_summary(&stack_results);
-
-        if stack_results.values().all(|&ok| ok) {
+        if results.values().all(|&ok| ok) {
             Ok(())
         } else {
-            Err(Error::other("One or more deployments failed"))
+            Err(Error::Other(format!("One or more deployments failed")))
         }
     }
 
-    fn resolve_portainer_creds(
+    pub async fn stack_list(
         &self,
-        args: &DeployArgs,
-        store: &CredentialStore,
-    ) -> Result<(String, String, String), Error> {
-        let stored = store.get(&args.host, "portainer");
-
-        let user = args
-            .user
-            .as_deref()
-            .or_else(|| stored.and_then(|c| c.user.as_deref()))
-            .ok_or_else(|| {
-                Error::other(format!(
-                    "No Portainer credentials found for {}.\nRun: portctl creds set -H {} -s portainer -u <user> -p <password>",
-                    args.host, args.host
-                ))
-            })?
-            .to_string();
-
-        let password = args
-            .password
-            .as_deref()
-            .or_else(|| stored.and_then(|c| c.password.as_deref()))
-            .ok_or_else(|| {
-                Error::other(format!(
-                    "No Portainer credentials found for {}. \
-                     Run: portctl creds set -H {} -s portainer -u <user> -p <password>",
-                    args.host, args.host
-                ))
-            })?
-            .to_string();
-
-        let url = stored
-            .and_then(|c| c.url.as_deref())
-            .map(String::from)
-            .unwrap_or_else(|| args.portainer_base_url());
-
-        Ok((user, password, url))
-    }
-
-    async fn deploy_stacks(
-        &self,
-        portainer: &PortainerClient,
-        endpoint_id: u64,
-        stacks: &[ResolvedStack],
-    ) -> HashMap<String, bool> {
-        let mut results = HashMap::new();
-
-        for stack in stacks {
-            let ok = portainer
-                .deploy_stack(
-                    &stack.name,
-                    &stack.compose_content,
-                    endpoint_id,
-                    stack.env_vars.clone(),
-                )
-                .await
-                .map(|_| true)
-                .unwrap_or_else(|e| {
-                    error!("Failed to deploy stack '{}': {}", stack.name, e);
-                    false
-                });
-
-            results.insert(stack.name.clone(), ok);
-        }
-
-        results
-    }
-
-    fn persist_generated_creds(
-        &self,
-        stacks: &[ResolvedStack],
-        results: &HashMap<String, bool>,
-        host: &str,
-        store: &mut CredentialStore,
+        args: StackListArgs,
+        store: CredentialStore,
     ) -> Result<(), Error> {
-        let mut any_saved = false;
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        let stacks = portainer.list_stacks().await?;
 
-        for stack in stacks {
-            let deployed_ok = *results.get(&stack.name).unwrap_or(&false);
-            if !deployed_ok {
-                continue;
-            }
-
-            let creds = &stack.generated_credentials;
-            if creds.user.is_none() && creds.password.is_none() {
-                continue;
-            }
-
-            let service = if NPM_TEMPLATES_NAMES.contains(&stack.template_name.as_str()) {
-                "npm"
-            } else {
-                &stack.template_name
-            };
-
-            store.patch(
-                host,
-                service,
-                Credentials {
-                    user: creds.user.clone(),
-                    password: creds.password.clone(),
-                    url: None,
-                },
-            );
-
-            info!(
-                "Auto-saved generated credentials for {} stack '{}' → stored as [{service}@{host}]",
-                stack.template_name, stack.name
-            );
-            any_saved = true;
+        if stacks.is_empty() {
+            println!("No stacks found on {}", args.host);
+            return Ok(());
         }
 
-        if any_saved {
-            store.save()?;
+        println!("{:<4}  {:<30}  {}", "ID", "NAME", "STATUS");
+        println!("{}", "─".repeat(55));
+        for s in &stacks {
+            println!("{:<4}  {:<30}  {}", s.id, s.name, "unimplemented");
         }
-
         Ok(())
     }
 
-    async fn deploy_proxies(
+    pub async fn proxy_enable(
         &self,
-        args: &DeployArgs,
-        store: &CredentialStore,
-        stacks: &[&ResolvedStack],
-    ) {
-        let Some(npm_creds) = store.get(args.npm_host(), "npm") else {
-            error!(
-                "No NPM credentials found for {} — was the npm stack deployed?\nRe-run without --enable-proxy first, then retry.",
-                args.npm_host()
-            );
-            return;
-        };
+        args: ProxyEnableArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let npm = self.build_npm_client(&args, &store).await?;
 
-        let (Some(npm_user), Some(npm_pass)) = (&npm_creds.user, &npm_creds.password) else {
-            error!("NPM credentials for {} are incomplete", args.npm_host());
-            return;
-        };
-
-        let npm_url = npm_creds
-            .url
-            .as_deref()
-            .map(String::from)
-            .unwrap_or_else(|| args.npm_base_url());
-
-        let mut npm = NpmClient::new(npm_url, args.npm_host().to_string(), self.insecure);
-
-        if let Err(e) = npm.authenticate(npm_user, npm_pass).await {
-            error!("NPM authentication failed — skipping proxy setup: {e}");
-            return;
-        }
-
-        for stack in stacks {
-            let proxies = default_proxies_for_template(&stack.template_name, &args.host);
-
+        for template_name in &args.stack {
+            let proxies = default_proxies_for_template(template_name, &args.host);
+            if proxies.is_empty() {
+                warn!("No proxy definitions found for template '{template_name}' — skipping");
+                continue;
+            }
             for proxy in proxies {
                 match npm.find_host_by_domain(&proxy.domain).await {
                     Ok(Some(_)) => {
@@ -250,7 +174,6 @@ impl Deployer {
                     }
                     Ok(None) => {}
                 }
-
                 let payload = CreateProxyHostPayload::new(
                     &proxy.domain,
                     &proxy.scheme,
@@ -258,28 +181,199 @@ impl Deployer {
                     proxy.forward_port,
                     proxy.websockets,
                 );
-
                 if let Err(e) = npm.create_proxy_host(payload).await {
                     error!("Failed to create proxy host for '{}': {e}", proxy.domain);
                 }
             }
         }
+        Ok(())
+    }
+
+    pub async fn proxy_list(
+        &self,
+        args: ProxyListArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let npm = self.build_npm_client(&args, &store).await?;
+        let hosts = npm.list_proxy_hosts().await?;
+
+        if hosts.is_empty() {
+            println!("No proxy hosts found on {}", args.npm_host());
+            return Ok(());
+        }
+
+        println!("{:<6}  {}", "ID", "DOMAINS");
+        println!("{}", "─".repeat(55));
+        for h in &hosts {
+            println!("{:<6}  {}", h.id, h.domain_names.join(", "));
+        }
+        Ok(())
+    }
+
+    async fn build_portainer_client(
+        &self,
+        args: &impl PortainerArgs,
+        store: &CredentialStore,
+    ) -> Result<PortainerClient, Error> {
+        let host = args.host();
+        let stored = store.get(host, "portainer");
+
+        let user = args
+            .user()
+            .or_else(|| stored.and_then(|c| c.user.as_deref()))
+            .ok_or_else(|| missing_portainer_creds(host))?
+            .to_string();
+
+        let password = args
+            .password()
+            .or_else(|| stored.and_then(|c| c.password.as_deref()))
+            .ok_or_else(|| missing_portainer_creds(host))?
+            .to_string();
+
+        let url = stored
+            .and_then(|c| c.url.as_deref())
+            .map(String::from)
+            .unwrap_or_else(|| args.portainer_base_url());
+
+        let mut client = PortainerClient::new(url.as_str(), host, self.secure);
+        client.authenticate(&user, &password).await?;
+        Ok(client)
+    }
+
+    async fn build_npm_client(
+        &self,
+        args: &impl NpmArgs,
+        store: &CredentialStore,
+    ) -> Result<NpmClient, Error> {
+        let npm_host = args.npm_host();
+        let npm_creds = store.get(npm_host, "npm").ok_or_else(|| {
+            Error::Other(format!(
+                "No NPM credentials found for {npm_host}.\n\
+                     Deploy the npm stack first, or set credentials with:\n\
+                     portctl creds set -H {npm_host} -s npm -u <user> -p <pass>"
+            ))
+        })?;
+
+        let (user, pass) = extract_creds(npm_creds, "NPM", npm_host)?;
+        let url = npm_creds
+            .url
+            .as_deref()
+            .map(String::from)
+            .unwrap_or_else(|| args.npm_base_url());
+
+        let mut client = NpmClient::new(url.as_str(), npm_host, self.secure);
+        client.authenticate(&user, &pass).await?;
+        Ok(client)
+    }
+
+    async fn deploy_stacks(
+        &self,
+        portainer: &PortainerClient,
+        endpoint_id: u64,
+        stacks: &[ResolvedStack],
+    ) -> HashMap<String, bool> {
+        let mut results = HashMap::new();
+        for stack in stacks {
+            let ok = portainer
+                .deploy_stack(
+                    &stack.name,
+                    &stack.compose_content,
+                    endpoint_id,
+                    stack.env_vars.clone(),
+                )
+                .await
+                .map(|_| true)
+                .unwrap_or_else(|e| {
+                    error!("Failed to deploy stack '{}': {}", stack.name, e);
+                    false
+                });
+            results.insert(stack.name.clone(), ok);
+        }
+        results
+    }
+
+    fn persist_generated_creds(
+        &self,
+        stacks: &[ResolvedStack],
+        results: &HashMap<String, bool>,
+        host: &str,
+        store: &mut CredentialStore,
+    ) -> Result<(), Error> {
+        let mut any_saved = false;
+        for stack in stacks {
+            if !results.get(&stack.name).copied().unwrap_or(false) {
+                continue;
+            }
+            let creds = &stack.generated_credentials;
+            if creds.user.is_none() && creds.password.is_none() {
+                continue;
+            }
+
+            let service = npm_service_key(&stack.template_name);
+            store.patch(
+                host,
+                service,
+                Credentials {
+                    user: creds.user.clone(),
+                    password: creds.password.clone(),
+                    url: None,
+                },
+            );
+            info!(
+                "Auto-saved generated credentials for '{}' → [{service}@{host}]",
+                stack.name
+            );
+            any_saved = true;
+        }
+        if any_saved {
+            store.save()?;
+        }
+        Ok(())
     }
 
     fn print_summary(&self, results: &HashMap<String, bool>) {
-        let total = results.len();
         let ok = results.values().filter(|&&v| v).count();
-
+        let total = results.len();
         info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        info!("DEPLOYMENT SUMMARY  — {ok}/{total} succeeded");
+        info!("DEPLOYMENT SUMMARY — {ok}/{total} succeeded");
         info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
         let mut names: Vec<_> = results.iter().collect();
         names.sort_by_key(|(name, _)| *name);
-
         for (name, &success) in names {
-            let status = if success { "OK" } else { "ERROR" };
-            info!("  {status} {name}")
+            info!("  {}  {name}", if success { "✓ OK   " } else { "✗ ERROR" });
         }
     }
+}
+
+fn npm_service_key(template_name: &str) -> &str {
+    if NPM_TEMPLATE_NAMES.contains(&template_name) {
+        "npm"
+    } else {
+        template_name
+    }
+}
+
+fn missing_portainer_creds(host: &str) -> Error {
+    Error::Other(format!(
+        "No Portainer credentials found for {host}.\n\
+         Run: portctl creds set -H {host} -s portainer -u <user> -p <pass>"
+    ))
+}
+
+fn extract_creds(
+    creds: &Credentials,
+    service: &str,
+    host: &str,
+) -> Result<(String, String), Error> {
+    let user = creds.user.clone().ok_or_else(|| {
+        Error::Other(format!(
+            "{service} credentials for {host} are missing a username"
+        ))
+    })?;
+    let pass = creds.password.clone().ok_or_else(|| {
+        Error::Other(format!(
+            "{service} credentials for {host} are missing a password"
+        ))
+    })?;
+    Ok((user, pass))
 }

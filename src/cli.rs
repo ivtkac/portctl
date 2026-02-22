@@ -21,7 +21,7 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn resolved_credentials_path(&self) -> PathBuf {
+    pub fn resolved_credentials_file(&self) -> PathBuf {
         self.credentials_file
             .clone()
             .unwrap_or_else(default_credentials_path)
@@ -30,10 +30,164 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    Deploy(DeployArgs),
+    #[command(subcommand)]
+    Stack(StackCommands),
+
+    #[command(subcommand)]
+    Proxy(ProxyCommands),
+
     #[command(subcommand)]
     Creds(CredsCommands),
-    ListTemplates,
+
+    #[command(subcommand)]
+    Templates(TemplatesCommands),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum StackCommands {
+    Deploy(StackDeployArgs),
+    List(StackListArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct StackDeployArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long, short = 'u', env = "PORTAINER_USER")]
+    pub user: Option<String>,
+
+    #[arg(long, short = 'p', env = "PORTAINER_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long, default_value = "9443")]
+    pub portainer_port: u16,
+
+    #[arg(long, short = 'n', value_delimiter = ',', required = true)]
+    pub name: Vec<String>,
+
+    #[arg(long, default_value = "local")]
+    pub endpoint: String,
+
+    #[arg(long)]
+    pub portainer_url: Option<String>,
+
+    #[arg(long, default_value = "compose")]
+    pub template_dir: String,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+impl StackDeployArgs {
+    pub fn portainer_base_url(&self) -> String {
+        match &self.portainer_url {
+            Some(url) => url.clone(),
+            None => format!("https://{}:{}", self.host, self.portainer_port),
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct StackListArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long, short = 'u', env = "PORTAINER_USER")]
+    pub user: Option<String>,
+
+    #[arg(long, short = 'p', env = "PORTAINER_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long, default_value = "9443")]
+    pub portainer_port: u16,
+
+    #[arg(long)]
+    pub portainer_url: Option<String>,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+impl StackListArgs {
+    pub fn portainer_base_url(&self) -> String {
+        match &self.portainer_url {
+            Some(url) => url.clone(),
+            None => format!("https://{}:{}", self.host, self.portainer_port),
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProxyCommands {
+    Enable(ProxyEnableArgs),
+
+    List(ProxyListArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProxyEnableArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long, short = 's', value_delimiter = ',', required = true)]
+    pub stack: Vec<String>,
+
+    #[arg(long)]
+    pub npm_host: Option<String>,
+
+    #[arg(long, default_value = "81")]
+    pub npm_port: u16,
+
+    #[arg(long)]
+    pub npm_url: Option<String>,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+impl ProxyEnableArgs {
+    pub fn npm_host(&self) -> &str {
+        self.npm_host.as_deref().unwrap_or(&self.host)
+    }
+
+    pub fn npm_base_url(&self) -> String {
+        match &self.npm_url {
+            Some(url) => url.clone(),
+            None => format!("http://{}:{}", self.host, self.npm_port),
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ProxyListArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long)]
+    pub npm_host: Option<String>,
+
+    #[arg(long, default_value = "81")]
+    pub npm_port: u16,
+
+    #[arg(long)]
+    pub npm_url: Option<String>,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+impl ProxyListArgs {
+    pub fn npm_host(&self) -> &str {
+        self.npm_host.as_deref().unwrap_or(&self.host)
+    }
+
+    pub fn npm_base_url(&self) -> String {
+        match &self.npm_url {
+            Some(url) => url.clone(),
+            None => format!("http://{}:{}", self.host, self.npm_port),
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -70,64 +224,7 @@ pub struct CredsRemoveArgs {
     pub service: String,
 }
 
-#[derive(Args, Debug, Clone)]
-pub struct DeployArgs {
-    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
-    pub host: String,
-
-    #[arg(long, short = 'u', env = "PORTAINER_USER")]
-    pub user: Option<String>,
-
-    #[arg(long, short = 'p', env = "PORTAINER_PASSWORD")]
-    pub password: Option<String>,
-
-    #[arg(long, default_value = "9443")]
-    pub portainer_port: u16,
-
-    #[arg(long, short = 's', value_delimiter = ',', required = true)]
-    pub stacks: Vec<String>,
-
-    #[arg(long, default_value = "local")]
-    pub endpoint: String,
-
-    #[arg(long)]
-    pub enable_proxy: bool,
-
-    #[arg(long)]
-    pub npm_host: Option<String>,
-
-    #[arg(long, default_value = "81")]
-    pub npm_port: u16,
-
-    #[arg(long)]
-    pub portainer_url: Option<String>,
-
-    #[arg(long)]
-    pub npm_url: Option<String>,
-
-    #[arg(long)]
-    pub insecure: bool,
-
-    #[arg(long, default_value = "compose")]
-    pub template_dir: String,
-}
-
-impl DeployArgs {
-    pub fn npm_host(&self) -> &str {
-        self.npm_host.as_deref().unwrap_or(&self.host)
-    }
-
-    pub fn portainer_base_url(&self) -> String {
-        match &self.portainer_url {
-            Some(url) => url.clone(),
-            None => format!("https://{}:{}", self.host, self.portainer_port),
-        }
-    }
-
-    pub fn npm_base_url(&self) -> String {
-        match &self.npm_url {
-            Some(url) => url.clone(),
-            None => format!("http://{}:{}", self.host, self.npm_port),
-        }
-    }
+#[derive(Subcommand, Debug)]
+pub enum TemplatesCommands {
+    List,
 }

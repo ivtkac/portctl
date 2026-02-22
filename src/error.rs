@@ -9,10 +9,7 @@ pub enum Error {
     AuthFailed { service: String, host: String },
 
     #[error("No JWT token received from {service}")]
-    NoToken { service: String },
-
-    #[error("Endpoint '{name}' not found on Portainer")]
-    EndpointNotFound { name: String },
+    NoJwtToken { service: String },
 
     #[error("Stack template '{name}' not found (checked: {path})")]
     TemplateNotFound { name: String, path: String },
@@ -27,12 +24,9 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Endpoint '{name}' not found on Portainer")]
+    EndpointNotFound { name: String },
+
     #[error("{0}")]
     Other(String),
-}
-
-impl Error {
-    pub fn other(msg: impl Into<String>) -> Self {
-        Self::Other(msg.into())
-    }
 }
