@@ -30,6 +30,9 @@ pub enum Error {
     #[error("Stack '{name}' not found on Portainer")]
     StackNotFound { name: String },
 
+    #[error("Missing template ID")]
+    MissingTemplateID,
+
     #[error("{0}")]
     Other(String),
 }

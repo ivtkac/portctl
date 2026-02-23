@@ -34,6 +34,14 @@ pub struct PortainerStack {
     pub status: Option<u64>,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct PortainerTemplate {
+    pub id: u64,
+    pub title: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeployStackPayload<'a> {
@@ -143,6 +151,35 @@ impl PortainerClient {
             self.host
         );
         Ok(())
+    }
+
+    pub async fn get_templates(&self) -> Result<Vec<PortainerTemplate>, Error> {
+        #[derive(Deserialize)]
+        struct Response {
+            templates: Vec<PortainerTemplate>,
+            version: Option<String>,
+        }
+
+        let res: Response = self.http.get("/templates").await?;
+        Ok(res.templates)
+    }
+
+    pub async fn get_template_file(&self, template_id: u64) -> Result<String, Error> {
+        #[derive(Deserialize)]
+        struct Response {
+            #[serde(rename = "FileContent")]
+            file_content: String,
+        }
+
+        let res: Response = self
+            .http
+            .post(
+                &format!("/templates/{template_id}/file"),
+                &serde_json::json!({}),
+            )
+            .await?;
+
+        Ok(res.file_content)
     }
 }
 

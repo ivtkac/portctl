@@ -1,4 +1,7 @@
-use crate::cli::{ProxyEnableArgs, ProxyListArgs, StackDeployArgs, StackListArgs, StackRemoveArgs};
+use crate::cli::{
+    ListTemplatesArgs, ProxyEnableArgs, ProxyListArgs, ShowTemplateArgs, StackDeployArgs,
+    StackListArgs, StackRemoveArgs,
+};
 use crate::client::{Authenticatable, CreateProxyHostPayload, NpmClient, PortainerClient};
 use crate::credentials::{CredentialStore, Credentials};
 use crate::error::Error;
@@ -62,6 +65,36 @@ impl PortainerArgs for StackRemoveArgs {
     }
     fn portainer_base_url(&self) -> String {
         StackRemoveArgs::portainer_base_url(self)
+    }
+}
+
+impl PortainerArgs for ListTemplatesArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        ListTemplatesArgs::portainer_base_url(self)
+    }
+}
+
+impl PortainerArgs for ShowTemplateArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        ShowTemplateArgs::portainer_base_url(self)
     }
 }
 
@@ -235,6 +268,46 @@ impl Deployer {
             println!("{:<6}  {}", h.id, h.domain_names.join(", "));
         }
         Ok(())
+    }
+
+    pub async fn list_templates(
+        &self,
+        args: ListTemplatesArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        let templates = portainer.get_templates().await?;
+
+        if templates.is_empty() {
+            println!("No templates found on {}", args.portainer_base_url());
+            return Ok(());
+        }
+
+        println!("{:<6}  {}", "ID", "NAME");
+        println!("{}", "─".repeat(55));
+        for t in &templates {
+            if t.name.is_some() {
+                println!("{:<6}  {}", t.id, t.name.as_ref().unwrap());
+            } else {
+                println!("{:<6}  {}", t.id, t.title);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn show_template(
+        &self,
+        args: ShowTemplateArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        if let Some(template_id) = args.template_id {
+            let content = portainer.get_template_file(template_id).await?;
+            println!("{content}");
+            Ok(())
+        } else {
+            Err(Error::MissingTemplateID)
+        }
     }
 
     async fn build_portainer_client(
