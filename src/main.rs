@@ -98,7 +98,17 @@ async fn main() -> Result<()> {
         }
 
         Commands::Templates(sub) => match sub {
-            TemplatesCommands::List => templates::print_available_templates(),
+            // TemplatesCommands::List => templates::print_available_templates(),
+            TemplatesCommands::List(args) => {
+                Deployer::new(args.secure)
+                    .list_templates(args, load_store()?)
+                    .await?;
+            }
+            TemplatesCommands::Show(args) => {
+                Deployer::new(args.secure)
+                    .show_template(args, load_store()?)
+                    .await?;
+            }
         },
     }
 

@@ -11,8 +11,8 @@ pub enum Error {
     #[error("No JWT token received from {service}")]
     NoJwtToken { service: String },
 
-    #[error("Stack template '{name}' not found (checked: {path})")]
-    TemplateNotFound { name: String, path: String },
+    #[error("Stack template '{0}' not found")]
+    TemplateNotFound(String),
 
     #[error("API error [{status}] during '{operation}': {body}")]
     ApiError {
@@ -29,6 +29,9 @@ pub enum Error {
 
     #[error("Stack '{name}' not found on Portainer")]
     StackNotFound { name: String },
+
+    #[error("Missing template ID")]
+    MissingTemplateID,
 
     #[error("{0}")]
     Other(String),

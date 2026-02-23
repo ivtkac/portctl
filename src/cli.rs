@@ -100,17 +100,14 @@ pub struct StackDeployArgs {
     #[arg(long, default_value = "9443")]
     pub portainer_port: u16,
 
-    #[arg(long, short = 'n', value_delimiter = ',', required = true)]
-    pub name: Vec<String>,
+    #[arg(long, short = 'n', required = true)]
+    pub name: String,
 
     #[arg(long, default_value = "local")]
     pub endpoint: String,
 
     #[arg(long)]
     pub portainer_url: Option<String>,
-
-    #[arg(long, default_value = "compose")]
-    pub template_dir: String,
 
     #[arg(long)]
     pub secure: bool,
@@ -263,5 +260,69 @@ pub struct CredsRemoveArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum TemplatesCommands {
-    List,
+    List(ListTemplatesArgs),
+    Show(ShowTemplateArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ListTemplatesArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long, short = 'u', env = "PORTAINER_USER")]
+    pub user: Option<String>,
+
+    #[arg(long, short = 'p', env = "PORTAINER_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long, default_value = "9443")]
+    pub portainer_port: u16,
+
+    #[arg(long)]
+    pub portainer_url: Option<String>,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ShowTemplateArgs {
+    #[arg(long, short = 'H', env = "PORTAINER_HOST")]
+    pub host: String,
+
+    #[arg(long, short = 'u', env = "PORTAINER_USER")]
+    pub user: Option<String>,
+
+    #[arg(long, short = 'p', env = "PORTAINER_PASSWORD")]
+    pub password: Option<String>,
+
+    #[arg(long, default_value = "9443")]
+    pub portainer_port: u16,
+
+    #[arg(long)]
+    pub portainer_url: Option<String>,
+
+    #[arg(long, short = 'n', required = true)]
+    pub name: String,
+
+    #[arg(long)]
+    pub secure: bool,
+}
+
+impl ListTemplatesArgs {
+    pub fn portainer_base_url(&self) -> String {
+        match &self.portainer_url {
+            Some(url) => url.clone(),
+            None => format!("https://{}:{}", self.host, self.portainer_port),
+        }
+    }
+}
+
+impl ShowTemplateArgs {
+    pub fn portainer_base_url(&self) -> String {
+        match &self.portainer_url {
+            Some(url) => url.clone(),
+            None => format!("https://{}:{}", self.host, self.portainer_port),
+        }
+    }
 }

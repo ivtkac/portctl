@@ -1,4 +1,7 @@
-use crate::cli::{ProxyEnableArgs, ProxyListArgs, StackDeployArgs, StackListArgs, StackRemoveArgs};
+use crate::cli::{
+    ListTemplatesArgs, ProxyEnableArgs, ProxyListArgs, ShowTemplateArgs, StackDeployArgs,
+    StackListArgs, StackRemoveArgs,
+};
 use crate::client::{Authenticatable, CreateProxyHostPayload, NpmClient, PortainerClient};
 use crate::credentials::{CredentialStore, Credentials};
 use crate::error::Error;
@@ -65,6 +68,36 @@ impl PortainerArgs for StackRemoveArgs {
     }
 }
 
+impl PortainerArgs for ListTemplatesArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        ListTemplatesArgs::portainer_base_url(self)
+    }
+}
+
+impl PortainerArgs for ShowTemplateArgs {
+    fn host(&self) -> &str {
+        &self.host
+    }
+    fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+    fn portainer_base_url(&self) -> String {
+        ShowTemplateArgs::portainer_base_url(self)
+    }
+}
+
 impl NpmArgs for ProxyEnableArgs {
     fn npm_host(&self) -> &str {
         ProxyEnableArgs::npm_host(self)
@@ -105,36 +138,25 @@ impl Deployer {
         );
 
         let overrides = HashMap::new();
-        let stacks: Vec<ResolvedStack> = args
-            .name
-            .iter()
-            .filter_map(|template_name| {
-                let service = npm_service_key(template_name);
-                let existing_creds = store.get(&args.host, service);
-                resolve_stack(
-                    template_name,
-                    &args.template_dir,
-                    &args.host,
-                    &overrides,
-                    existing_creds,
-                )
-                .map_err(|e| error!("Skipping template '{template_name}': {e}"))
-                .ok()
-            })
-            .collect();
-
-        if stacks.is_empty() {
-            return Err(Error::Other(format!(
-                "No valid stack templates resolved — aborting"
-            )));
-        }
+        let template_name = &args.name;
+        let service = npm_service_key(&template_name);
+        let existing_creds = store.get(&args.host, service);
+        let compose_content = self.get_template(&args, store.clone()).await?;
+        let stack = resolve_stack(
+            &args.host,
+            &template_name,
+            compose_content,
+            &overrides,
+            existing_creds,
+        )?;
+        let stacks = vec![stack];
 
         let results = self.deploy_stacks(&portainer, endpoint_id, &stacks).await;
         self.persist_generated_creds(&stacks, &results, &args.host, &mut store)?;
         self.print_summary(&results);
 
         if results.values().all(|&ok| ok) {
-            Ok(())
+            return Ok(());
         } else {
             Err(Error::Other(format!("One or more deployments failed")))
         }
@@ -234,6 +256,49 @@ impl Deployer {
         for h in &hosts {
             println!("{:<6}  {}", h.id, h.domain_names.join(", "));
         }
+        Ok(())
+    }
+
+    pub async fn list_templates(
+        &self,
+        args: ListTemplatesArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        let templates = portainer.get_templates().await?;
+
+        if templates.is_empty() {
+            println!("No templates found on {}", args.portainer_base_url());
+            return Ok(());
+        }
+
+        println!("{:<6}  {}", "ID", "NAME");
+        println!("{}", "─".repeat(55));
+        for t in &templates {
+            println!("{:<6} {}", t.id, t.name);
+        }
+        Ok(())
+    }
+
+    pub async fn get_template(
+        &self,
+        args: &StackDeployArgs,
+        store: CredentialStore,
+    ) -> Result<String, Error> {
+        let portainer = self.build_portainer_client(args, &store).await?;
+        let template_name = &args.name;
+        let content = portainer.get_template_file(template_name.as_str()).await?;
+        Ok(content)
+    }
+
+    pub async fn show_template(
+        &self,
+        args: ShowTemplateArgs,
+        store: CredentialStore,
+    ) -> Result<(), Error> {
+        let portainer = self.build_portainer_client(&args, &store).await?;
+        let content = portainer.get_template_file(&args.name).await?;
+        println!("{content}");
         Ok(())
     }
 

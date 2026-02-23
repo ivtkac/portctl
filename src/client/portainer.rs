@@ -34,6 +34,13 @@ pub struct PortainerStack {
     pub status: Option<u64>,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct PortainerTemplate {
+    pub id: u64,
+    #[serde(rename = "title")]
+    pub name: String,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeployStackPayload<'a> {
@@ -143,6 +150,45 @@ impl PortainerClient {
             self.host
         );
         Ok(())
+    }
+
+    pub async fn get_templates(&self) -> Result<Vec<PortainerTemplate>, Error> {
+        #[derive(Deserialize)]
+        struct Response {
+            templates: Vec<PortainerTemplate>,
+        }
+
+        let res: Response = self.http.get("/templates").await?;
+        Ok(res.templates)
+    }
+
+    pub async fn get_template_id(&self, template_name: &str) -> Result<u64, Error> {
+        let templates = self.get_templates().await?;
+        templates
+            .into_iter()
+            .find(|t| t.name == template_name.to_string())
+            .map(|t| t.id)
+            .ok_or(Error::TemplateNotFound(template_name.to_string()))
+    }
+
+    pub async fn get_template_file(&self, template_name: &str) -> Result<String, Error> {
+        #[derive(Deserialize)]
+        struct Response {
+            #[serde(rename = "FileContent")]
+            file_content: String,
+        }
+
+        let template_id = self.get_template_id(template_name).await?;
+
+        let res: Response = self
+            .http
+            .post(
+                &format!("/templates/{template_id}/file"),
+                &serde_json::json!({}),
+            )
+            .await?;
+
+        Ok(res.file_content)
     }
 }
 
