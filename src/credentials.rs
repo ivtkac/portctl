@@ -52,6 +52,7 @@ struct Store {
     hosts: HashMap<String, HashMap<String, Credentials>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct CredentialStore {
     path: PathBuf,
     store: Store,

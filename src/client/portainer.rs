@@ -37,9 +37,8 @@ pub struct PortainerStack {
 #[derive(Deserialize, Debug)]
 pub struct PortainerTemplate {
     pub id: u64,
-    pub title: String,
-    pub name: Option<String>,
-    pub description: Option<String>,
+    #[serde(rename = "title")]
+    pub name: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -157,19 +156,29 @@ impl PortainerClient {
         #[derive(Deserialize)]
         struct Response {
             templates: Vec<PortainerTemplate>,
-            version: Option<String>,
         }
 
         let res: Response = self.http.get("/templates").await?;
         Ok(res.templates)
     }
 
-    pub async fn get_template_file(&self, template_id: u64) -> Result<String, Error> {
+    pub async fn get_template_id(&self, template_name: &str) -> Result<u64, Error> {
+        let templates = self.get_templates().await?;
+        templates
+            .into_iter()
+            .find(|t| t.name == template_name.to_string())
+            .map(|t| t.id)
+            .ok_or(Error::TemplateNotFound(template_name.to_string()))
+    }
+
+    pub async fn get_template_file(&self, template_name: &str) -> Result<String, Error> {
         #[derive(Deserialize)]
         struct Response {
             #[serde(rename = "FileContent")]
             file_content: String,
         }
+
+        let template_id = self.get_template_id(template_name).await?;
 
         let res: Response = self
             .http

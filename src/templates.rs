@@ -136,19 +136,13 @@ pub fn print_available_templates() {
 }
 
 pub fn resolve_stack(
-    template_name: &str,
-    template_dir: &str,
     host_ip: &str,
+    template_name: &str,
+    compose_content: String,
     overrides: &HashMap<String, String>,
     existing_creds: Option<&Credentials>,
 ) -> Result<ResolvedStack, Error> {
     let builtins = builtin_templates();
-    let compose_content =
-        load_compose(template_dir, template_name).map_err(|path| Error::TemplateNotFound {
-            name: template_name.to_string(),
-            path,
-        })?;
-
     let mut env: HashMap<String, String> = HashMap::new();
     let mut generated_credentials = GeneratedCredentials::default();
 
@@ -199,11 +193,6 @@ pub fn default_proxies_for_template(template_name: &str, host_ip: &str) -> Vec<P
         .unwrap_or_default()
 }
 
-fn load_compose(template_dir: &str, template_name: &str) -> Result<String, String> {
-    let path = Path::new(template_dir).join(format!("{template_name}.yaml"));
-    std::fs::read_to_string(&path).map_err(|_| path.display().to_string())
-}
-
 fn resolve_env_value(
     entry: &EnvDefault,
     host_ip: &str,
@@ -231,23 +220,4 @@ fn resolve_env_value(
     }
 
     value
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    const HOST: &str = "192.168.1.100";
-
-    fn write_compose(dir: &TempDir, template_name: &str) -> String {
-        let content = format!("# compose for {template_name}\nservices: {{}}");
-        std::fs::write(dir.path().join(format!("{template_name}.yaml")), &content)
-            .expect("failed to write compose fixture");
-        dir.path().to_str().unwrap().to_string()
-    }
-
-    fn no_overrides() -> HashMap<String, String> {
-        HashMap::new()
-    }
 }

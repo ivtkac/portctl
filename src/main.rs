@@ -7,7 +7,10 @@ pub mod templates;
 pub mod utils;
 
 use crate::{
-    cli::{Cli, Commands, CredsCommands, ProxyCommands, StackCommands, TemplatesCommands},
+    cli::{
+        Cli, Commands, CredsCommands, ProxyCommands, StackCommands, StackDeployArgs,
+        TemplatesCommands,
+    },
     credentials::{CredentialStore, Credentials},
     deployer::Deployer,
 };

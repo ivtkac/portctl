@@ -138,36 +138,25 @@ impl Deployer {
         );
 
         let overrides = HashMap::new();
-        let stacks: Vec<ResolvedStack> = args
-            .name
-            .iter()
-            .filter_map(|template_name| {
-                let service = npm_service_key(template_name);
-                let existing_creds = store.get(&args.host, service);
-                resolve_stack(
-                    template_name,
-                    &args.template_dir,
-                    &args.host,
-                    &overrides,
-                    existing_creds,
-                )
-                .map_err(|e| error!("Skipping template '{template_name}': {e}"))
-                .ok()
-            })
-            .collect();
-
-        if stacks.is_empty() {
-            return Err(Error::Other(format!(
-                "No valid stack templates resolved — aborting"
-            )));
-        }
+        let template_name = &args.name;
+        let service = npm_service_key(&template_name);
+        let existing_creds = store.get(&args.host, service);
+        let compose_content = self.get_template(&args, store.clone()).await?;
+        let stack = resolve_stack(
+            &args.host,
+            &template_name,
+            compose_content,
+            &overrides,
+            existing_creds,
+        )?;
+        let stacks = vec![stack];
 
         let results = self.deploy_stacks(&portainer, endpoint_id, &stacks).await;
         self.persist_generated_creds(&stacks, &results, &args.host, &mut store)?;
         self.print_summary(&results);
 
         if results.values().all(|&ok| ok) {
-            Ok(())
+            return Ok(());
         } else {
             Err(Error::Other(format!("One or more deployments failed")))
         }
@@ -286,13 +275,20 @@ impl Deployer {
         println!("{:<6}  {}", "ID", "NAME");
         println!("{}", "─".repeat(55));
         for t in &templates {
-            if t.name.is_some() {
-                println!("{:<6}  {}", t.id, t.name.as_ref().unwrap());
-            } else {
-                println!("{:<6}  {}", t.id, t.title);
-            }
+            println!("{:<6} {}", t.id, t.name);
         }
         Ok(())
+    }
+
+    pub async fn get_template(
+        &self,
+        args: &StackDeployArgs,
+        store: CredentialStore,
+    ) -> Result<String, Error> {
+        let portainer = self.build_portainer_client(args, &store).await?;
+        let template_name = &args.name;
+        let content = portainer.get_template_file(template_name.as_str()).await?;
+        Ok(content)
     }
 
     pub async fn show_template(
@@ -301,13 +297,9 @@ impl Deployer {
         store: CredentialStore,
     ) -> Result<(), Error> {
         let portainer = self.build_portainer_client(&args, &store).await?;
-        if let Some(template_id) = args.template_id {
-            let content = portainer.get_template_file(template_id).await?;
-            println!("{content}");
-            Ok(())
-        } else {
-            Err(Error::MissingTemplateID)
-        }
+        let content = portainer.get_template_file(&args.name).await?;
+        println!("{content}");
+        Ok(())
     }
 
     async fn build_portainer_client(

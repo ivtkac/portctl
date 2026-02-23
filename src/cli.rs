@@ -100,8 +100,8 @@ pub struct StackDeployArgs {
     #[arg(long, default_value = "9443")]
     pub portainer_port: u16,
 
-    #[arg(long, short = 'n', value_delimiter = ',', required = true)]
-    pub name: Vec<String>,
+    #[arg(long, short = 'n', required = true)]
+    pub name: String,
 
     #[arg(long, default_value = "local")]
     pub endpoint: String,
@@ -109,11 +109,23 @@ pub struct StackDeployArgs {
     #[arg(long)]
     pub portainer_url: Option<String>,
 
-    #[arg(long, default_value = "compose")]
-    pub template_dir: String,
-
     #[arg(long)]
     pub secure: bool,
+}
+
+impl Default for StackDeployArgs {
+    fn default() -> Self {
+        Self {
+            host: "localhost".to_string(),
+            user: None,
+            password: None,
+            portainer_port: 9443,
+            name: "default".to_string(),
+            endpoint: "local".to_string(),
+            portainer_url: None,
+            secure: false,
+        }
+    }
 }
 
 impl StackDeployArgs {
@@ -305,8 +317,8 @@ pub struct ShowTemplateArgs {
     #[arg(long)]
     pub portainer_url: Option<String>,
 
-    #[arg(long)]
-    pub template_id: Option<u64>,
+    #[arg(long, short = 'n', required = true)]
+    pub name: String,
 
     #[arg(long)]
     pub secure: bool,
