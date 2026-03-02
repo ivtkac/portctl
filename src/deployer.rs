@@ -18,103 +18,54 @@ trait PortainerArgs {
     fn portainer_base_url(&self) -> String;
 }
 
+macro_rules! impl_portainer_args {
+    ($($t:ty), *) => {
+        $(
+            impl PortainerArgs for $t {
+                fn host(&self) -> &str {
+                    &self.portainer.host
+                }
+
+                fn user(&self) -> Option<&str> {
+                    self.portainer.user.as_deref()
+                }
+
+                fn password(&self) -> Option<&str> {
+                    self.portainer.password.as_deref()
+                }
+
+                fn portainer_base_url(&self) -> String {
+                    self.portainer.base_url()
+                }
+            }
+        )*
+    };
+}
+
+impl_portainer_args!(StackDeployArgs, StackListArgs, StackRemoveArgs, ListTemplatesArgs, ShowTemplateArgs);
+
 trait NpmArgs {
     fn npm_host(&self) -> &str;
     fn npm_base_url(&self) -> String;
 }
 
-impl PortainerArgs for StackDeployArgs {
-    fn host(&self) -> &str {
-        &self.host
-    }
-    fn user(&self) -> Option<&str> {
-        self.user.as_deref()
-    }
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-    fn portainer_base_url(&self) -> String {
-        StackDeployArgs::portainer_base_url(self)
-    }
+macro_rules! impl_npm_args {
+    ($($t:ty), *) => {
+        $(
+            impl NpmArgs for $t {
+                fn npm_host(&self) -> &str {
+                    &self.npm.host
+                }
+
+                fn npm_base_url(&self) -> String {
+                    self.npm.base_url()
+                }
+            }
+        )*
+    };
 }
 
-impl PortainerArgs for StackListArgs {
-    fn host(&self) -> &str {
-        &self.host
-    }
-    fn user(&self) -> Option<&str> {
-        self.user.as_deref()
-    }
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-    fn portainer_base_url(&self) -> String {
-        StackListArgs::portainer_base_url(self)
-    }
-}
-
-impl PortainerArgs for StackRemoveArgs {
-    fn host(&self) -> &str {
-        &self.host
-    }
-    fn user(&self) -> Option<&str> {
-        self.user.as_deref()
-    }
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-    fn portainer_base_url(&self) -> String {
-        StackRemoveArgs::portainer_base_url(self)
-    }
-}
-
-impl PortainerArgs for ListTemplatesArgs {
-    fn host(&self) -> &str {
-        &self.host
-    }
-    fn user(&self) -> Option<&str> {
-        self.user.as_deref()
-    }
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-    fn portainer_base_url(&self) -> String {
-        ListTemplatesArgs::portainer_base_url(self)
-    }
-}
-
-impl PortainerArgs for ShowTemplateArgs {
-    fn host(&self) -> &str {
-        &self.host
-    }
-    fn user(&self) -> Option<&str> {
-        self.user.as_deref()
-    }
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-    fn portainer_base_url(&self) -> String {
-        ShowTemplateArgs::portainer_base_url(self)
-    }
-}
-
-impl NpmArgs for ProxyEnableArgs {
-    fn npm_host(&self) -> &str {
-        ProxyEnableArgs::npm_host(self)
-    }
-    fn npm_base_url(&self) -> String {
-        ProxyEnableArgs::npm_base_url(self)
-    }
-}
-
-impl NpmArgs for ProxyListArgs {
-    fn npm_host(&self) -> &str {
-        ProxyListArgs::npm_host(self)
-    }
-    fn npm_base_url(&self) -> String {
-        ProxyListArgs::npm_base_url(self)
-    }
-}
+impl_npm_args!(ProxyEnableArgs, ProxyListArgs);
 
 pub struct Deployer {
     secure: bool,
@@ -140,10 +91,10 @@ impl Deployer {
         let overrides = HashMap::new();
         let template_name = &args.name;
         let service = npm_service_key(&template_name);
-        let existing_creds = store.get(&args.host, service);
+        let existing_creds = store.get(&args.portainer.host, service);
         let compose_content = self.get_template(&args, store.clone()).await?;
         let stack = resolve_stack(
-            &args.host,
+            &args.portainer.host,
             &template_name,
             compose_content,
             &overrides,
@@ -152,7 +103,7 @@ impl Deployer {
         let stacks = vec![stack];
 
         let results = self.deploy_stacks(&portainer, endpoint_id, &stacks).await;
-        self.persist_generated_creds(&stacks, &results, &args.host, &mut store)?;
+        self.persist_generated_creds(&stacks, &results, &args.portainer.host, &mut store)?;
         self.print_summary(&results);
 
         if results.values().all(|&ok| ok) {
@@ -171,7 +122,7 @@ impl Deployer {
         let stacks = portainer.list_stacks().await?;
 
         if stacks.is_empty() {
-            println!("No stacks found on {}", args.host);
+            println!("No stacks found on {}", args.portainer.host);
             return Ok(());
         }
 
@@ -203,7 +154,7 @@ impl Deployer {
         let npm = self.build_npm_client(&args, &store).await?;
 
         for template_name in &args.stack {
-            let proxies = default_proxies_for_template(template_name, &args.host);
+            let proxies = default_proxies_for_template(template_name, &args.npm.host);
             if proxies.is_empty() {
                 warn!("No proxy definitions found for template '{template_name}' — skipping");
                 continue;

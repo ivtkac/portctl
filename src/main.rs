@@ -27,17 +27,17 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Stack(sub) => match sub {
             StackCommands::Deploy(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.portainer.secure)
                     .stack_deploy(args, load_store()?)
                     .await?;
             }
             StackCommands::Remove(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.portainer.secure)
                     .stack_remove(args, load_store()?)
                     .await?;
             }
             StackCommands::List(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.portainer.secure)
                     .stack_list(args, load_store()?)
                     .await?;
             }
@@ -45,12 +45,12 @@ async fn main() -> Result<()> {
 
         Commands::Proxy(sub) => match sub {
             ProxyCommands::Enable(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.npm.secure)
                     .proxy_enable(args, load_store()?)
                     .await?;
             }
             ProxyCommands::List(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.npm.secure)
                     .proxy_list(args, load_store()?)
                     .await?;
             }
@@ -100,12 +100,12 @@ async fn main() -> Result<()> {
         Commands::Templates(sub) => match sub {
             // TemplatesCommands::List => templates::print_available_templates(),
             TemplatesCommands::List(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.portainer.secure)
                     .list_templates(args, load_store()?)
                     .await?;
             }
             TemplatesCommands::Show(args) => {
-                Deployer::new(args.secure)
+                Deployer::new(args.portainer.secure)
                     .show_template(args, load_store()?)
                     .await?;
             }

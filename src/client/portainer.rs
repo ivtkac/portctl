@@ -64,12 +64,14 @@ impl PortainerClient {
 
     pub async fn get_endpoint_id(&self, endpoint_name: &str) -> Result<u64, Error> {
         debug!("[Portainer:{}] Fetching endpoints...", self.host);
+
         if endpoint_name == "local" {
             let mut form = HashMap::new();
             form.insert("Name", "local");
             form.insert("EndpointCreationType", "1");
             self.http.post_form("/endpoints", form).await?;
         }
+
         let endpoints: Vec<Endpoint> = self.http.get("/endpoints").await?;
         endpoints
             .into_iter()
@@ -82,10 +84,12 @@ impl PortainerClient {
 
     pub async fn get_stack_id(&self, endpoint_id: u64, stack_name: &str) -> Result<u64, Error> {
         debug!("[Portainer:{}] Fetching stacks...", self.host);
+
         let stacks: Vec<PortainerStack> = self
             .http
             .get(&format!("/stacks?endpointId={endpoint_id}"))
             .await?;
+
         stacks
             .into_iter()
             .find(|s| s.name == stack_name)
@@ -106,6 +110,7 @@ impl PortainerClient {
             "[Portainer:{}] Deploying stack '{stack_name}'...",
             self.host
         );
+
         let endpoint = format!("/stacks/create/standalone/string?endpointId={endpoint_id}");
         let res = self
             .http
@@ -134,6 +139,7 @@ impl PortainerClient {
             "[Portainer:{}] Stack '{stack_name}' deployed successfully",
             self.host
         );
+
         Ok(())
     }
 
@@ -145,10 +151,12 @@ impl PortainerClient {
         self.http
             .delete_raw(&format!("/stacks/{stack_id}?endpointId={endpoint_id}"))
             .await?;
+
         info!(
             "[Portainer:{}] Stack '{stack_id}' deleted successfully",
             self.host
         );
+
         Ok(())
     }
 
